@@ -87,11 +87,15 @@ sufficiently large block that would comply with the realloc request.
 
 // length of segregated list
 #define LEN 30
+#define GET_LIST(i)   (*(void **)(free_lists + (i*DSIZE)))
+#define SET_LIST(i, ptr) ((GET_LIST(i)) = ptr)
+
 // End of macros
 
 /* Global variables */
-static char *heap_listp = NULL;  /* Pointer to first block */
-void* free_lists[LEN];
+void *heap_listp = NULL;  /* Pointer to first block */
+void* free_lists;         /* Pointer to first block of the segregated list*/
+
 
 // Helper Functions
 static void *extend_heap(size_t size);
@@ -108,6 +112,11 @@ static void free_with_lifo_policy(void *bp);
  */
 int mm_init(void)
 {
+  free_lists = NULL;
+  heap_listp = NULL;
+  // We put our free_lists on the heap
+  if ((free_lists = mem_sbrk(LEN*DSIZE)) == (void *)-1)
+      return -1;
 
   /* Create the initial empty heap */
   if ((heap_listp = mem_sbrk(4*WSIZE)) == (void *)-1)
@@ -116,7 +125,7 @@ int mm_init(void)
     // initialize free_lists
     int i;
     for(i = 0; i  < LEN; i++)
-        free_lists[i] = NULL;
+        SET_LIST(i, NULL);
 
     PUT(heap_listp, 0);                          /* Alignment padding */
     PUT(heap_listp + (1*WSIZE), PACK(DSIZE, 1)); /* Prologue header */
@@ -329,7 +338,7 @@ void add_to_free_lists(void *bp)
   int size = GET_SIZE(HDRP(bp));
   int i = get_index(size);
   // pointer to our explicit list
-  void *current = free_lists[i];
+  void *current = GET_LIST(i);
   // if the list is empty
   if (current == NULL)
     {
@@ -352,7 +361,7 @@ void add_to_free_lists(void *bp)
     }
   // update the list pointer, which points to the recently added
   // free block, that is, bp
-  free_lists[i] = bp;
+  SET_LIST(i, bp);
   return;
 }
 
@@ -397,7 +406,7 @@ static void remove_from_list(void * bp)
     //          next  <---  bp
     else if (BACK(bp) == NULL && FWD(bp) != NULL)
       {
-          free_lists[i] = FWD(bp);
+          SET_LIST(i, FWD(bp));
           BACK_LINK(FWD(bp), NULL);
 
       }
@@ -408,7 +417,7 @@ static void remove_from_list(void * bp)
 
     else
       {
-          free_lists[i] = NULL;
+          SET_LIST(i, NULL);
 
       }
 
@@ -518,7 +527,7 @@ static void *find_fit(size_t asize)
     {
         // next iterate over the free list at index i
         // to find free block
-        void *bp = free_lists[i];
+        void *bp = GET_LIST(i);
         while (bp != NULL)
           {
               size_t curr_block_size = GET_SIZE(HDRP(bp));
