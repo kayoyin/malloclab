@@ -86,9 +86,10 @@ sufficiently large block that would comply with the realloc request.
 #define BACK_LINK(bp, val) PUT((char *)(bp)+WSIZE, val)
 
 // length of segregated list
-#define LEN 30
+#define LEN 20
 #define GET_LIST(i)   (*(void **)(free_lists + (i*DSIZE)))
 #define SET_LIST(i, ptr) ((GET_LIST(i)) = ptr)
+
 
 // End of macros
 
@@ -105,7 +106,7 @@ static void *find_fit(size_t asize);
 static void add_to_free_lists(void *bp);
 static void remove_from_list(void *bp);
 static void free_with_lifo_policy(void *bp);
-
+static int mm_check(void);
 /*
  * mm_init :  initialize free_lists ,i.e. segregated list pointers
               initialize the heap
@@ -177,6 +178,16 @@ return 0;
      if ((bp = extend_heap(extendsize/WSIZE)) == NULL)
          return NULL;
      place(bp,asize, 1);
+
+     // Test heap consistency after malloc
+
+          if (mm_check() == 0)
+           {
+             printf("Failure!\n");
+             exit(0);
+           }
+
+
      return bp;
    }
 
@@ -201,9 +212,16 @@ void mm_free(void *bp)
     PUT(HDRP(bp), PACK(size,0));
     PUT(FTRP(bp), PACK(size,0));
 
-
     free_with_lifo_policy(bp);
 
+
+    /*
+         if (mm_check() == 0)
+          {
+            printf("Failure!\n");
+            exit(0);
+          }
+    */
 }
 
 /* $end mmfree */
@@ -282,6 +300,15 @@ void mm_free(void *bp)
           oldsize = size;
       memcpy(newptr, ptr, oldsize);
       mm_free(ptr);
+
+
+      /*
+           if (mm_check() == 0)
+            {
+              printf("Failure!\n");
+              exit(0);
+            }
+      */
       return newptr;
   }
  /* $end mm_realloc */
@@ -590,4 +617,144 @@ static void free_with_lifo_policy(void *bp)
 
   bp = coalesce(bp);
   add_to_free_lists(bp);
+}
+
+
+
+
+/*
+ * mm_check - check of the heap for consistency
+
+  Points to check:
+      Is every block in the free list marked as free?
+      Do the free blocks in the segregated list point to valid heap addresses?
+      Do any allocated blocks overlap?
+      Do the pointers in a heap block point to valid heap addresses?
+
+mm_check returns 0 if the heap is inconsistent
+else it returns 1
+
+ */
+static int mm_check(void)
+{
+
+  //  The following code snippet addresses the following questions.
+  //      Is every free block actually in the free list?
+  //      Do the free blocks in the segregated list point to valid heap addresses?
+  void* start = mem_heap_lo();
+  void* end = mem_heap_hi();
+
+  // Counters for number of free blocks in segreagated list and heap
+  int segcount = 0;
+  int heapcount = 0;
+  int i;
+  // iterate of over the segregated list
+  for(i = 0; i < LEN; i++)
+  {
+      void *bp = GET_LIST(i);
+      // iterate over the free list
+      while (bp)
+      {
+          //  Is every block in the free list marked as free?
+          if (GET_ALLOC(HDRP(bp)) == 1 || GET_ALLOC(FTRP(bp)) == 1)
+          {
+            printf ("Free blocks not marked as free\n");
+            return 0;
+          }
+          //   Do the free blocks in the segregated list point to valid heap addresses?
+          if ((heap_listp > bp) | (bp > end))
+          {
+                printf ("Free blocks pointing out of heap\n");
+                return 0;
+          }
+
+
+          // Are there any contiguous free blocks that somehow escaped coalescing?
+          if ((PREV_BLKP(bp) > start) && (GET_ALLOC(HDRP(PREV_BLKP(bp))) == 0))
+          {
+                printf ("Contiguous free block escaped coalescing \n");
+                return 0;
+          }
+
+          if ((NEXT_BLKP(bp) < end) && (GET_ALLOC(HDRP(NEXT_BLKP(bp))) == 0))
+          {
+                printf ("Contiguous free block escaped coalescing \n");
+                return 0;
+          }
+
+          segcount++;
+
+
+          bp  = FWD(bp);
+        }
+    }
+
+  // Do any allocated blocks overlap?
+  void *ptr = heap_listp;
+  // Iterate over the heap
+  while(ptr != NULL && GET_SIZE(HDRP(ptr))!=0)
+    {
+        // If it is allocated
+        if(GET_ALLOC(HDRP(ptr)))
+        {
+         void *next = NEXT_BLKP(ptr);
+         // detect an overlap
+         if (ptr + GET_SIZE(HDRP(ptr)) - WSIZE >= next)
+            {
+              printf("Allocated blocks overlap; %p\n",ptr);
+              return 0;
+            }
+        }
+        // If it is free
+        if(GET_ALLOC(HDRP(ptr)) == 0)
+        {
+          heapcount++;
+        }
+
+     ptr = NEXT_BLKP(ptr);
+ }
+
+ /*
+
+ // Are each free block in a free list?
+if (segcount != heapcount)
+{
+  printf("%d free block(s) are not in a free list \n", heapcount - segcount);
+  return 0;
+}
+
+*/
+
+ // Do the pointers in a heap block point to valid heap addresses?
+
+
+  if (end >= mem_heapsize() + start)
+  {
+    printf("Pointer does not point to last byte of the heap \n");
+  }
+
+  ptr = start;
+  while(GET_SIZE(HDRP(ptr))>0)
+    {
+        if(ptr > end || ptr < start)
+        {
+          printf("Pointers do not point to a valid heap address \n");
+          return 0;
+        }
+
+        // Do the header and footer of a block match?
+        if (GET(HDRP(ptr)) != GET(FTRP(ptr)))
+        {
+          printf("Header and footer do not match \n");
+          return 0;
+        }
+
+
+
+        ptr = NEXT_BLKP(ptr);
+    }
+
+
+
+  return 1;
 }
